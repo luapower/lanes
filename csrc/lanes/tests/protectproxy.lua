@@ -1,5 +1,5 @@
 local lanes = require "lanes"
-lanes.configure()
+lanes.configure( 1)
 
 local body = function( param)
 	print ( "lane body: " .. param)

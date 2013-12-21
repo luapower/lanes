@@ -35,13 +35,15 @@ THE SOFTWARE.
 ===============================================================================
 ]]--
 
+local core = require "lanes.core"
 -- Lua 5.1: module() creates a global variable
 -- Lua 5.2: module() is gone
 -- almost everything module() does is done by require() anyway
 -- -> simply create a table, populate it, return it, and be done
 local lanes = {}
 
-lanes.configure = function( _params)
+-- this function is available in the public interface until it is called, after which it disappears
+lanes.configure = function( settings_)
 
 	-- This check is for sublanes requiring Lanes
 	--
@@ -51,7 +53,7 @@ lanes.configure = function( _params)
 		error( "To use 'lanes', you will also need to have 'string' available.", 2)
 	end
 
-	--
+	-- 
 	-- Cache globals for code that might run under sandboxing
 	--
 	local assert = assert
@@ -62,89 +64,80 @@ lanes.configure = function( _params)
 	local tostring = assert( tostring)
 	local error = assert( error)
 
-	local default_params = { nb_keepers = 1, on_state_create = nil, shutdown_timeout = 0.25,
-									with_timers = true, track_lanes = nil, protect_allocator = true}
+	local default_params =
+	{
+		nb_keepers = 1,
+		on_state_create = nil,
+		shutdown_timeout = 0.25,
+		with_timers = true,
+		track_lanes = false,
+		demote_full_userdata = nil,
+		verbose_errors = false,
+		-- LuaJIT provides a thread-unsafe allocator by default, so we need to protect it when used in parallel lanes
+		protect_allocator = (jit and jit.version) and true or false
+	}
+	local boolean_param_checker = function( val_)
+		-- non-'boolean-false' should be 'boolean-true' or nil
+		return val_ and (val_ == true) or true
+	end
 	local param_checkers =
 	{
-		nb_keepers = function( _val)
+		nb_keepers = function( val_)
 			-- nb_keepers should be a number > 0
-			return type( _val) == "number" and _val > 0
+			return type( val_) == "number" and val_ > 0
 		end,
-		with_timers = function( _val)
-			-- with_timers may be nil or boolean
-			if _val then
-				return type( _val) == "boolean"
-			else
-				return true -- _val is either false or nil
-			end
-		end,
-		protect_allocator = function( _val)
-			-- protect_allocator may be nil or boolean
-			if _val then
-				return type( _val) == "boolean"
-			else
-				return true -- _val is either false or nil
-			end
-		end,
-		on_state_create = function( _val)
+		with_timers = boolean_param_checker,
+		protect_allocator = boolean_param_checker,
+		on_state_create = function( val_)
 			-- on_state_create may be nil or a function
-			return _val and type( _val) == "function" or true
+			return val_ and type( val_) == "function" or true
 		end,
-		shutdown_timeout = function( _val)
+		shutdown_timeout = function( val_)
 			-- shutdown_timeout should be a number >= 0
-			return type( _val) == "number" and _val >= 0
+			return type( val_) == "number" and val_ >= 0
 		end,
-		track_lanes = function( _val)
-			-- track_lanes may be nil or boolean
-			return _val and type( _val) == "boolean" or true
-		end
+		track_lanes = boolean_param_checker,
+		demote_full_userdata = boolean_param_checker,
+		verbose_errors = boolean_param_checker
 	}
 
-	local params_checker = function( _params)
-		if not _params then
+	local params_checker = function( settings_)
+		if not settings_ then
 			return default_params
 		end
-		if type( _params) ~= "table" then
-			error( "Bad parameter #1 to lanes.configure(), should be a table")
+		-- make a copy of the table to leave the provided one unchanged, *and* to help ensure it won't change behind our back
+		local settings = {}
+		if type( settings_) ~= "table" then
+			error "Bad parameter #1 to lanes.configure(), should be a table"
 		end
 		-- any setting not present in the provided parameters takes the default value
-		for key, value in pairs( default_params) do
-			local my_param = _params[key]
+		for key, checker in pairs( param_checkers) do
+			local my_param = settings_[key]
 			local param
 			if my_param ~= nil then
 				param = my_param
 			else
 				param = default_params[key]
 			end
-			if not param_checkers[key]( param) then
+			if not checker( param) then
 				error( "Bad " .. key .. ": " .. tostring( param), 2)
 			end
-			_params[key] = param
+			settings[key] = param
 		end
-		return _params
+		return settings
 	end
-
-	_params = params_checker( _params)
-
-	local core = require "lanes.core"
-	assert( type( core)=="table")
-
-	-- configure() is available only the first time lanes.core is required process-wide, and we *must* call it to have the other functions in the interface
-	if core.configure then core.configure( _params.nb_keepers, _params.on_state_create, _params.shutdown_timeout, _params.track_lanes, _params.protect_allocator) end
-
+	local settings = core.configure and core.configure( params_checker( settings_)) or core.settings
 	local thread_new = assert( core.thread_new)
-
 	local set_singlethreaded = assert( core.set_singlethreaded)
-
 	local max_prio = assert( core.max_prio)
 
-lanes.ABOUT=
+lanes.ABOUT =
 {
-    author= "Asko Kauppi <akauppi@gmail.com>, Benoit Germain <bnt.germain@gmail.com>",
-    description= "Running multiple Lua states in parallel",
-    license= "MIT/X11",
-    copyright= "Copyright (c) 2007-10, Asko Kauppi; (c) 2011-12, Benoit Germain",
-    version = assert( core.version)
+	author= "Asko Kauppi <akauppi@gmail.com>, Benoit Germain <bnt.germain@gmail.com>",
+	description= "Running multiple Lua states in parallel",
+	license= "MIT/X11",
+	copyright= "Copyright (c) 2007-10, Asko Kauppi; (c) 2011-13, Benoit Germain",
+	version = assert( core.version)
 }
 
 
@@ -193,7 +186,7 @@ end
 --         "math,os": math + os + base libraries (named ones + base)
 --         "*":     all standard libraries available
 --
--- 'opt': .priority:  int (-2..+2) smaller is lower priority (0 = default)
+-- 'opt': .priority:  int (-3..+3) smaller is lower priority (0 = default)
 --
 --	      .cancelstep: bool | uint
 --            false: cancellation check only at pending Linda operations
@@ -209,7 +202,7 @@ end
 --
 -- Calling with a function parameter ('lane_func') ends the string/table
 -- modifiers, and prepares a lane generator. One can either finish here,
--- and call the generator later (maybe multiple times, with different parameters)
+-- and call the generator later (maybe multiple times, with different parameters) 
 -- or add on actual thread arguments to also ignite the thread on the same call.
 
 local valid_libs=
@@ -235,7 +228,7 @@ local function gen( ... )
     local lev= 2  -- level for errors
 
     local n= select('#',...)
-
+    
     if n==0 then
         error( "No parameters!" )
     end
@@ -279,14 +272,14 @@ local function gen( ... )
             end
         end
     end
-
+    
     local prio, cs, g_tbl, package_tbl, required
 
     for k,v in pairs(opt) do
             if k=="priority" then prio= v
         elseif k=="cancelstep" then
             cs = (v==true) and 100 or
-                (v==false) and 0 or
+                (v==false) and 0 or 
                 type(v)=="number" and v or
                 error( "Bad cancelstep: "..tostring(v), lev )
         elseif k=="globals" then g_tbl= v
@@ -304,8 +297,8 @@ local function gen( ... )
     -- Lane generator
     --
     return function(...)
-              return thread_new( func, libs, _params.on_state_create, cs, prio, g_tbl, package_tbl, required, ...)     -- args
-           end
+        return thread_new( func, libs, settings.on_state_create, cs, prio, g_tbl, package_tbl, required, ...)     -- args
+    end
 end
 
 ---=== Lindas ===---
@@ -326,7 +319,7 @@ local timer = function() error "timers are not active" end
 local timer_lane = nil
 local timers = timer
 
-if _params.with_timers ~= false then
+if settings.with_timers ~= false then
 
 local timer_gateway = assert( core.timer_gateway)
 --
@@ -334,7 +327,7 @@ local timer_gateway = assert( core.timer_gateway)
 -- timer tables and sleep in between the timer events. All interaction with
 -- the timer lane happens via a 'timer_gateway' Linda, which is common to
 -- all that 'require "lanes"'.
---
+-- 
 -- Linda protocol to timer lane:
 --
 --  TGW_KEY: linda_h, key, [wakeup_at_secs], [repeat_secs]
@@ -352,6 +345,8 @@ timer_gateway:set(first_time_key,true)
 --
 if first_time then
 
+	local now_secs = core.now_secs
+	assert( type( now_secs) == "function")
 	-----
 	-- Snore loop (run as a lane on the background)
 	--
@@ -361,11 +356,9 @@ if first_time then
 	-- remains.
 	--
 	local timer_body = function()
-		-- require lanes.core inside the timer body to prevent pulling now_secs() through an uvpvalue
-		local core = require "lanes.core"
-
+		set_debug_threadname( "LanesTimer")
 		--
-		-- { [deep_linda_lightuserdata]= { [deep_linda_lightuserdata]=linda_h,
+		-- { [deep_linda_lightuserdata]= { [deep_linda_lightuserdata]=linda_h, 
 		--                                 [key]= { wakeup_secs [,period_secs] } [, ...] },
 		-- }
 		--
@@ -414,7 +407,7 @@ if first_time then
 				t1 = { [linda_deep] = linda}     -- proxy to use the Linda
 				collection[linda_deep] = t1
 			end
-
+		
 			if wakeup_at == nil then
 				-- Clear the timer
 				--
@@ -444,14 +437,12 @@ if first_time then
 					t2= {}
 					t1[key]= t2
 				end
-
+		
 				t2[1] = wakeup_at
 				t2[2] = period   -- can be 'nil'
 			end
 		end -- set_timer()
 
-		local now_secs = core.now_secs
-		assert( type( now_secs) == "function")
 		-----
 		-- [next_wakeup_at]= check_timers()
 		-- Check timers, and wake up the ones expired (if any)
@@ -471,12 +462,12 @@ if first_time then
 						local wakeup_at= t2[1]
 						local period= t2[2]     -- may be 'nil'
 
-						if wakeup_at <= now then
+						if wakeup_at <= now then    
 							local linda= t1[linda_deep]
 							assert(linda)
-
+		
 							linda:set( key, now )
-
+				
 							-- 'pairs()' allows the values to be modified (and even
 							-- removed) as far as keys are not touched
 
@@ -495,10 +486,10 @@ if first_time then
 								t2[1]= wakeup_at
 							end
 						end
-
+										
 						if wakeup_at and ((not next_wakeup) or (wakeup_at < next_wakeup)) then
 							next_wakeup= wakeup_at
-						end
+						end 
 					end
 				end -- t2 loop
 			end -- t1 loop
@@ -507,7 +498,6 @@ if first_time then
 		end -- check_timers()
 
 		local timer_gateway_batched = timer_gateway.batched
-		set_debug_threadname( "LanesTimer")
 		set_finalizer( function( err, stk)
 			if err and type( err) ~= "userdata" then
 				WR( "LanesTimer error: "..tostring(err))
@@ -588,7 +578,7 @@ timers = function()
 	return r
 end
 
-end -- _params.with_timers
+end -- settings.with_timers
 
 ---=== Lock & atomic generators ===---
 
@@ -606,28 +596,42 @@ end -- _params.with_timers
 -- acquire (+M) and release (-M). For binary locks, use M==1.
 --
 -- PUBLIC LANES API
-local function genlock( linda, key, N )
-    linda:limit(key,N)
-    linda:set(key,nil)  -- clears existing data
+local genlock = function( linda, key, N)
+	linda:limit( key, N)
+	linda:set( key, nil)  -- clears existing data
 
-    --
-    -- [true [, ...]= trues(uint)
-    --
-    local function trues(n)
-        if n>0 then return true,trues(n-1) end
-    end
+	--
+	-- [true [, ...]= trues(uint)
+	--
+	local function trues( n)
+		if n > 0 then
+			return true, trues( n - 1)
+		end
+	end
 
-    return
-    function(M)
-        if M>0 then
-            -- 'nil' timeout allows 'key' to be numeric
-            linda:send( nil, key, trues(M) )    -- suspends until been able to push them
-        else
-            for i=1,-M do
-                linda:receive( key )
-            end
-        end
-    end
+	-- use an optimized version for case N == 1
+	return (N == 1) and
+	function( M, mode_)
+		local timeout = (mode_ == "try") and 0 or nil
+		if M > 0 then
+			-- 'nil' timeout allows 'key' to be numeric
+			return linda:send( timeout, key, true)    -- suspends until been able to push them
+		else
+			local k = linda:receive( nil, key)
+			return k and true or false
+		end
+	end
+	or
+	function( M, mode_)
+		local timeout = (mode_ == "try") and 0 or nil
+		if M > 0 then
+			-- 'nil' timeout allows 'key' to be numeric
+			return linda:send( timeout, key, trues(M))    -- suspends until been able to push them
+		else
+			local k = linda:receive( nil, linda.batched, key, -M)
+			return k and true or false
+		end
+	end
 end
 
 
@@ -660,26 +664,24 @@ end
 	lanes.linda = core.linda
 	lanes.cancel_error = core.cancel_error
 	lanes.nameof = core.nameof
-	lanes.threads = (_params.track_lanes and core.threads) and core.threads or function() error "lane tracking is not available" end
+	lanes.threads = core.threads or function() error "lane tracking is not available" end -- core.threads isn't registered if settings.track_lanes is false
+	lanes.set_thread_priority = core.set_thread_priority
 	lanes.timer = timer
 	lanes.timer_lane = timer_lane
 	lanes.timers = timers
 	lanes.genlock = genlock
 	lanes.now_secs = core.now_secs
 	lanes.genatomic = genatomic
-	-- from now on, calling configure does nothing but checking that we don't call it with parameters that changed compared to the first invocation
-	lanes.configure = function( _params2)
-		_params2 = params_checker( _params2 or _params)
-		for key, value2 in pairs( _params2) do
-			local value = _params[key]
-			if value2 ~= value then
-				error( "mismatched configuration: " .. key .. " is " .. tostring( value2) .. " instead of " .. tostring( value))
-			end
-		end
-		return lanes
-	end
+	lanes.configure = nil -- no need to call configure() ever again
 	return lanes
 end -- lanes.configure
+
+-- no need to force calling configure() excepted the first time
+if core.settings then
+	return lanes.configure()
+else
+	return lanes
+end
 
 --the end
 return lanes

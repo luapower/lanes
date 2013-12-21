@@ -118,7 +118,8 @@ local st
 local t0= os.time()
 while os.time()-t0 < 5 do
     st= lane9.status
-    io.stderr:write( (i==1) and st.." " or '.' )
+    local i
+	 io.stderr:write( (i==1) and st.." " or '.' )
     if st~="pending" then break end
 end
 PRINT(" "..st)
@@ -136,7 +137,8 @@ lane9:cancel()
 local t0= os.time()
 while os.time()-t0 < 5 do
     st= lane9.status
-    io.stderr:write( (i==1) and st.." " or '.' )
+    local i
+	 io.stderr:write( (i==1) and st.." " or '.' )
     if st~="running" then break end
 end
 PRINT(" "..st)

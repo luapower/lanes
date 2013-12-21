@@ -1,4 +1,4 @@
-LuaLanes v3.6.2 from https://github.com/LuaLanes/lanes (MIT license)
+LuaLanes from https://github.com/LuaLanes/lanes branch 3.7.0 (MIT license)
 
 lanes.lua moved to root dir.
 changed protect_allocator = true in default_params in lanes.lua.

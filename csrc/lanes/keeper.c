@@ -41,7 +41,6 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <ctype.h>
 
 #include "lua.h"
@@ -51,7 +50,6 @@
 #include "tools.h"
 #include "keeper.h"
 
-#if KEEPER_MODEL == KEEPER_MODEL_C
 //###################################################################################
 // Keeper implementation
 //###################################################################################
@@ -71,7 +69,7 @@ typedef struct
 static keeper_fifo* prepare_fifo_access( lua_State* L, int idx)
 {
 	keeper_fifo* fifo = (keeper_fifo*) lua_touserdata( L, idx);
-	if( fifo)
+	if( fifo != NULL)
 	{
 		idx = lua_absindex( L, idx);
 		STACK_GROW( L, 1);
@@ -186,7 +184,8 @@ static void push_table( lua_State* L, int idx)
 int keeper_push_linda_storage( lua_State* L, void* ptr)
 {
 	struct s_Keeper* K = keeper_acquire( ptr);
-	lua_State* KL = K->L;
+	lua_State* KL = K ? K->L : NULL;
+	if( KL == NULL) return 0;
 	STACK_CHECK( KL);
 	lua_pushlightuserdata( KL, fifos_key);                      // fifos_key
 	lua_rawget( KL, LUA_REGISTRYINDEX);                         // fifos
@@ -207,10 +206,10 @@ int keeper_push_linda_storage( lua_State* L, void* ptr)
 	{
 		keeper_fifo* fifo = prepare_fifo_access( KL, -1);         // storage key fifo
 		lua_pushvalue( KL, -2);                                   // storage key fifo key
-		luaG_inter_move( KL, L, 1);                               // storage key fifo          // out key
+		luaG_inter_move( KL, L, 1, eLM_FromKeeper);               // storage key fifo          // out key
 		STACK_MID( L, 2);
 		lua_newtable( L);                                                                      // out key keyout
-		luaG_inter_move( KL, L, 1);                               // storage key               // out key keyout fifo
+		luaG_inter_move( KL, L, 1, eLM_FromKeeper);               // storage key               // out key keyout fifo
 		lua_pushinteger( L, fifo->first);                                                      // out key keyout fifo first
 		STACK_MID( L, 5);
 		lua_setfield( L, -3, "first");                                                         // out key keyout fifo
@@ -287,15 +286,15 @@ int keepercall_receive( lua_State* L)
 {
 	int top = lua_gettop( L);
 	int i;
-	keeper_fifo* fifo;
 	push_table( L, 1);                           // ud keys fifos
 	lua_replace( L, 1);                          // fifos keys
 	for( i = 2; i <= top; ++ i)
 	{
+		keeper_fifo* fifo;
 		lua_pushvalue( L, i);                      // fifos keys key[i]
 		lua_rawget( L, 1);                         // fifos keys fifo
 		fifo = prepare_fifo_access( L, -1);        // fifos keys fifo
-		if( fifo && fifo->count > 0)
+		if( fifo != NULL && fifo->count > 0)
 		{
 			fifo_pop( L, fifo, 1);                   // fifos keys val
 			if( !lua_isnil( L, -1))
@@ -333,7 +332,7 @@ int keepercall_receive_batched( lua_State* L)
 		lua_rawget( L, 2);                                    // key fifos fifo
 		lua_remove( L, 2);                                    // key fifo
 		fifo = prepare_fifo_access( L, 2);                    // key fifo
-		if( fifo && fifo->count >= min_count)
+		if( fifo != NULL && fifo->count >= min_count)
 		{
 			fifo_pop( L, fifo, __min( max_count, fifo->count)); // key ...
 		}
@@ -361,7 +360,7 @@ int keepercall_limit( lua_State* L)
 	lua_pushvalue( L, -1);                             // fifos key key
 	lua_rawget( L, -3);                                // fifos key fifo
 	fifo = (keeper_fifo*) lua_touserdata( L, -1);
-	if( !fifo)
+	if( fifo ==  NULL)
 	{
 		lua_pop( L, 1);                                  // fifos key
 		fifo_new( L);                                    // fifos key fifo
@@ -438,7 +437,7 @@ int keepercall_get( lua_State* L)
 	lua_replace( L, 1);                               // fifos key
 	lua_rawget( L, 1);                                // fifos fifo
 	fifo = prepare_fifo_access( L, -1);               // fifos fifo
-	if( fifo && fifo->count > 0)
+	if( fifo != NULL && fifo->count > 0)
 	{
 		lua_remove( L, 1);                              // fifo
 		// read one value off the fifo
@@ -498,7 +497,7 @@ int keepercall_count( lua_State* L)
 			lua_rawget( L, 2);                               // out fifos keys fifo
 			fifo = prepare_fifo_access( L, -1);              // out fifos keys fifo
 			lua_pop( L, 1);                                  // out fifos keys
-			if( fifo)
+			if( fifo != NULL)
 			{
 				lua_pushinteger( L, fifo->count);              // out fifos keys count
 				lua_rawset( L, 1);                             // out fifos keys
@@ -512,7 +511,6 @@ int keepercall_count( lua_State* L)
 	}
 	return 1;
 }
-#endif // KEEPER_MODEL == KEEPER_MODEL_C
 
 //###################################################################################
 // Keeper API, accessed from linda methods
@@ -538,20 +536,26 @@ void close_keepers( void)
 #endif // HAVE_KEEPER_ATEXIT_DESINIT
 {
 	int i;
-	// 2-pass close, in case a keeper holds a reference to a linda bound to another keeoer
-	for( i = 0; i < GNbKeepers; ++ i)
+	int const nbKeepers = GNbKeepers;
+	// NOTE: imagine some keeper state N+1 currently holds a linda that uses another keeper N, and a _gc that will make use of it
+	// when keeper N+1 is closed, object is GCed, linda operation is called, which attempts to acquire keeper N, whose Lua state no longer exists
+	// in that case, the linda operation should do nothing. which means that these operations must check for keeper acquisition success
+	GNbKeepers = 0;
+	for( i = 0; i < nbKeepers; ++ i)
 	{
 		lua_State* L = GKeepers[i].L;
-		GKeepers[i].L = 0;
+		GKeepers[i].L = NULL;
 		lua_close( L);
 	}
-	for( i = 0; i < GNbKeepers; ++ i)
+	for( i = 0; i < nbKeepers; ++ i)
 	{
 		MUTEX_FREE( &GKeepers[i].lock_);
 	}
-	if( GKeepers) free( GKeepers);
+	if( GKeepers != NULL)
+	{
+		free( GKeepers);
+	}
 	GKeepers = NULL;
-	GNbKeepers = 0;
 }
 
 /*
@@ -562,33 +566,29 @@ void close_keepers( void)
 * Note: Any problems would be design flaws; the created Lua state is left
 *       unclosed, because it does not really matter. In production code, this
 *       function never fails.
+* settings table is at position 1 on the stack
 */
-char const* init_keepers( lua_State* L, int _on_state_create, int const _nbKeepers)
+char const* init_keepers( lua_State* L)
 {
 	int i;
-	assert( _nbKeepers >= 1);
-	GNbKeepers = _nbKeepers;
-	GKeepers = malloc( _nbKeepers * sizeof( struct s_Keeper));
-	for( i = 0; i < _nbKeepers; ++ i)
+	PROPAGATE_ALLOCF_PREP( L);
+
+	STACK_CHECK( L);
+	lua_getfield( L, 1, "nb_keepers");
+	GNbKeepers = (int) lua_tointeger( L, -1);
+	lua_pop( L, 1);
+	STACK_END( L, 0);
+	assert( GNbKeepers >= 1);
+
+	GKeepers = malloc( GNbKeepers * sizeof( struct s_Keeper));
+	for( i = 0; i < GNbKeepers; ++ i)
 	{
-		lua_State* K;
-		DEBUGSPEW_CODE( fprintf( stderr, INDENT_BEGIN "### init_keepers %d BEGIN\n" INDENT_END, i));
-		DEBUGSPEW_CODE( ++ debugspew_indent_depth);
-		// We need to load all base libraries in the keeper states so that the transfer databases are populated properly
-		// 
-		// 'io' for debugging messages, 'package' because we need to require modules exporting idfuncs
-		// the others because they export functions that we may store in a keeper for transfer between lanes
-		K = luaG_newstate( L, _on_state_create, "K");
-
+		lua_State* K = PROPAGATE_ALLOCF_ALLOC();
+		if( K == NULL)
+		{
+			(void) luaL_error( L, "init_keepers() failed while creating keeper state; out of memory");
+		}
 		STACK_CHECK( K);
-
-		// replace default 'package' contents with stuff gotten from the master state
-		lua_getglobal( L, "package");
-		luaG_inter_copy_package( L, K, -1);
-		lua_pop( L, 1);
-
-		DEBUGSPEW_CODE( fprintf( stderr, INDENT_BEGIN "### init_keepers %d END\n" INDENT_END, i));
-		DEBUGSPEW_CODE( -- debugspew_indent_depth);
 
 		// to see VM name in Decoda debugger
 		lua_pushliteral( K, "Keeper #");
@@ -596,76 +596,21 @@ char const* init_keepers( lua_State* L, int _on_state_create, int const _nbKeepe
 		lua_concat( K, 2);
 		lua_setglobal( K, "decoda_name");
 
-#if KEEPER_MODEL == KEEPER_MODEL_C
 		// create the fifos table in the keeper state
 		lua_pushlightuserdata( K, fifos_key);
 		lua_newtable( K);
 		lua_rawset( K, LUA_REGISTRYINDEX);
-#endif // KEEPER_MODEL == KEEPER_MODEL_C
 
-#if KEEPER_MODEL == KEEPER_MODEL_LUA
-		// use package.loaders[2] to find keeper microcode (NOTE: this works only if nobody tampered with the loaders table...)
-		lua_getglobal( K, "package");                  // package
-		lua_getfield( K, -1, "loaders");               // package package.loaders
-		lua_rawgeti( K, -1, 2);                        // package package.loaders package.loaders[2]
-		lua_pushliteral( K, "lanes-keeper");           // package package.loaders package.loaders[2] "lanes-keeper"
-		STACK_MID( K, 4);
-		// first pcall loads lanes-keeper.lua, second one runs the chunk
-		if( lua_pcall( K, 1 /*args*/, 1 /*results*/, 0 /*errfunc*/) || lua_pcall( K, 0 /*args*/, 0 /*results*/, 0 /*errfunc*/))
-		{
-			// LUA_ERRRUN / LUA_ERRMEM / LUA_ERRERR
-			//
-			char const* err = lua_tostring( K, -1);
-			assert( err);
-			return err;
-		}                                              // package package.loaders
-		STACK_MID( K, 2);
-		lua_pop( K, 2);
-#endif // KEEPER_MODEL == KEEPER_MODEL_LUA
 		STACK_END( K, 0);
-		MUTEX_INIT( &GKeepers[i].lock_);
+		// we can trigger a GC from inside keeper_call(), where a keeper is acquired
+		// from there, GC can collect a linda, which would acquire the keeper again, and deadlock the thread.
+		MUTEX_RECURSIVE_INIT( &GKeepers[i].lock_);
 		GKeepers[i].L = K;
-		//GKeepers[i].count = 0;
 	}
 #if HAVE_KEEPER_ATEXIT_DESINIT
 	atexit( atexit_close_keepers);
 #endif // HAVE_KEEPER_ATEXIT_DESINIT
-	return NULL;    // ok
-}
-
-// cause each keeper state to populate its database of transferable functions with those from the specified module
-// do do this we simply require the module inside the keeper state, then populate the lookup database
-void populate_keepers( lua_State* L)
-{
-	size_t name_len;
-	char const* name = luaL_checklstring( L, -1, &name_len);
-	int i;
-
-	DEBUGSPEW_CODE( fprintf( stderr, INDENT_BEGIN "populate_keepers %s BEGIN\n" INDENT_END, name));
-	DEBUGSPEW_CODE( ++ debugspew_indent_depth);
-
-	for( i = 0; i < GNbKeepers; ++ i)
-	{
-		lua_State* K = GKeepers[i].L;
-		int res;
-		MUTEX_LOCK( &GKeepers[i].lock_);
-		STACK_CHECK( K);
-		STACK_GROW( K, 2);
-		lua_getglobal( K, "require");
-		lua_pushlstring( K, name, name_len);
-		res = lua_pcall( K, 1, 1, 0);
-		if( res != LUA_OK)
-		{
-			char const* err = luaL_checkstring( K, -1);
-			luaL_error( L, "error requiring '%s' in keeper state: %s", name, err);
-		}
-		// after requiring the module, register the functions it exported in our name<->function database
-		populate_func_lookup_table( K, -1, name);
-		lua_pop( K, 1);
-		STACK_END( K, 0);
-		MUTEX_UNLOCK( &GKeepers[i].lock_);
-	}
-	DEBUGSPEW_CODE( -- debugspew_indent_depth);
+	return NULL; // ok
 }
 
 struct s_Keeper* keeper_acquire( void const* ptr)
@@ -682,9 +627,10 @@ struct s_Keeper* keeper_acquire( void const* ptr)
 		* consistently.
 		*
 		* Pointers are often aligned by 8 or so - ignore the low order bits
+		* have to cast to unsigned long to avoid compilation warnings about loss of data when converting pointer-to-integer
 		*/
-		unsigned int i= ((uintptr_t)(ptr) >> 3) % GNbKeepers;
-		struct s_Keeper *K= &GKeepers[i];
+		unsigned int i = (unsigned int)(((unsigned long)(ptr) >> 3) % GNbKeepers);
+		struct s_Keeper* K= &GKeepers[i];
 
 		MUTEX_LOCK( &K->lock_);
 		//++ K->count;
@@ -747,12 +693,16 @@ int keeper_call( lua_State *K, keeper_api_t _func, lua_State *L, void *linda, ui
 
 	lua_pushlightuserdata( K, linda);
 
-	if( (args == 0) || luaG_inter_copy( L, K, args) == 0) // L->K
+	if( (args == 0) || luaG_inter_copy( L, K, args, eLM_ToKeeper) == 0) // L->K
 	{
 		lua_call( K, 1 + args, LUA_MULTRET);
 
 		retvals = lua_gettop( K) - Ktos;
-		if( (retvals > 0) && luaG_inter_move( K, L, retvals) != 0) // K->L
+		// note that this can raise a luaL_error while the keeper state (and its mutex) is acquired
+		// this may interrupt a lane, causing the destruction of the underlying OS thread
+		// after this, another lane making use of this keeper can get an error code from the mutex-locking function
+		// when attempting to grab the mutex again (WINVER <= 0x400 does this, but locks just fine, I don't know about pthread)
+		if( (retvals > 0) && luaG_inter_move( K, L, retvals, eLM_FromKeeper) != 0) // K->L
 		{
 			retvals = -1;
 		}
