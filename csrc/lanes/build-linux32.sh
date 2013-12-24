@@ -1,2 +1,2 @@
-mkdir -p ../../linux/bin/lanes
-gcc *.c -O3 -s -o ../../linux/bin/lanes/core.so -shared -I. -I../lua -DNDEBUG
+mkdir -p ../../bin/linux32/lanes
+gcc *.c -O3 -s -o ../../bin/linux32/lanes/core.so -shared -I. -I../lua -DNDEBUG
