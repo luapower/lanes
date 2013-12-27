@@ -3,13 +3,13 @@ project: lanes
 tagline: Lua Lanes
 ---
 
-**NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes].**
+**NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
 
 Lanes 3.7.0 | Lua 5.1, Lua 5.2, LuaJIT 2
 
 ### Documentation
 
-You can read the up-to-date Lanes documentation [here][lanes_doc].
+There's up-to-date Lanes documentation [here][lanes doc]. Ignore the [old site].
 
 ### LuaJIT notes
 
@@ -19,6 +19,6 @@ You can read the up-to-date Lanes documentation [here][lanes_doc].
 	   explicitly inside the lane or luajit will crash.
 
 
-[lanes]:     http://github.com/LuaLanes/lanes
-[lanes_doc]: https://rawgithub.com/LuaLanes/lanes/master/docs/index.html
-[lanes_old]: http://kotisivu.dnainternet.net/askok/bin/lanes/
+[lanes site]:     http://github.com/LuaLanes/lanes
+[lanes doc]:      https://rawgithub.com/LuaLanes/lanes/master/docs/index.html
+[old site]:       http://kotisivu.dnainternet.net/askok/bin/lanes/
