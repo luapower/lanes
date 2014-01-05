@@ -6,8 +6,6 @@ category:    OS
 
 **NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
 
-Lanes 3.7.0 | Lua 5.1, Lua 5.2, LuaJIT 2
-
 ### Documentation
 
 There's up-to-date Lanes documentation [here][lanes doc]. Ignore the [old site].
