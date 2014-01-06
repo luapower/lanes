@@ -1,9 +1,3 @@
-LuaLanes from https://github.com/LuaLanes/lanes branch 3.7.0 (MIT license)
+LuaLanes 3.7.0 from https://github.com/LuaLanes/lanes (MIT license)
 
 lanes.lua moved to root dir.
-changed protect_allocator = true in default_params in lanes.lua.
-
-failing tests:
-
-	atexit.lua, finalizer.lua, func_is_string.lua, launchtest.lua crash intermitently.
-	require fail specifically because of luajit.
