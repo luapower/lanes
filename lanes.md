@@ -1,7 +1,6 @@
 ---
 project:     lanes
 tagline:     Lua Lanes
-category:    OS
 ---
 
 **NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
