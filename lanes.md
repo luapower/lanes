@@ -1,6 +1,6 @@
 ---
-project:     lanes
-tagline:     Lua Lanes
+project: lanes
+tagline: threads support (Lua Lanes)
 ---
 
 **NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
