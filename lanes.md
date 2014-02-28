@@ -5,11 +5,13 @@ tagline: threads support
 
 **NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
 
-### Documentation
+## `local lanes = require'lanes'`
+
+## Documentation
 
 There's up-to-date Lanes documentation [here][lanes doc]. Ignore the [old site].
 
-### LuaJIT notes
+## LuaJIT notes
 
   * to use ffi inside lanes you have to require the ffi module inside the lane, since the ffi module cannot
     be transferred as an upvalue to your lane (you will get an error about "destination transfer database").
