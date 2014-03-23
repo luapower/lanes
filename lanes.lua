@@ -128,7 +128,6 @@ lanes.configure = function( settings_)
 	end
 	local settings = core.configure and core.configure( params_checker( settings_)) or core.settings
 	local thread_new = assert( core.thread_new)
-	local set_singlethreaded = assert( core.set_singlethreaded)
 	local max_prio = assert( core.max_prio)
 
 lanes.ABOUT =
@@ -197,7 +196,10 @@ end
 --
 --        .globals:  table of globals to set for a new thread (passed by value)
 --
---        .required:  table of packages to require
+--        .required: table of packages to require
+--
+--        .gc_cb:    function called when the lane handle is collected
+--
 --        ... (more options may be introduced later) ...
 --
 -- Calling with a function parameter ('lane_func') ends the string/table
@@ -273,10 +275,11 @@ local function gen( ... )
         end
     end
     
-    local prio, cs, g_tbl, package_tbl, required
+    local prio, cs, g_tbl, package_tbl, required, gc_cb
 
     for k,v in pairs(opt) do
-            if k=="priority" then prio= v
+        if k == "priority" then
+            prio = (type( v) == "number") and v or error( "Bad 'prio' option: expecting number, got " .. type( v), lev)
         elseif k=="cancelstep" then
             cs = (v==true) and 100 or
                 (v==false) and 0 or 
@@ -287,6 +290,8 @@ local function gen( ... )
             package_tbl = (type( v) == "table") and v or error( "Bad package: " .. tostring( v), lev)
         elseif k=="required" then
             required= (type( v) == "table") and v or error( "Bad 'required' option: expecting table, got " .. type( v), lev)
+        elseif k == "gc_cb" then
+            gc_cb = (type( v) == "function") and v or error( "Bad 'gc_cb' option: expecting function, got " .. type( v), lev)
         --..
         elseif k==1 then error( "unkeyed option: ".. tostring(v), lev )
         else error( "Bad option: ".. tostring(k), lev )
@@ -297,20 +302,9 @@ local function gen( ... )
     -- Lane generator
     --
     return function(...)
-        return thread_new( func, libs, settings.on_state_create, cs, prio, g_tbl, package_tbl, required, ...)     -- args
+        return thread_new( func, libs, cs, prio, g_tbl, package_tbl, required, gc_cb, ...)     -- args
     end
 end
-
----=== Lindas ===---
-
--- We let the C code attach methods to userdata directly
-
------
--- lanes.linda(["name"]) -> linda_ud
---
--- PUBLIC LANES API
-local linda = core.linda
-
 
 ---=== Timers ===---
 
@@ -580,13 +574,25 @@ end
 
 end -- settings.with_timers
 
+-- avoid pulling the whole core module as upvalue when cancel_error is enough
+local cancel_error = assert( core.cancel_error)
+
 ---=== Lock & atomic generators ===---
 
 -- These functions are just surface sugar, but make solutions easier to read.
 -- Not many applications should even need explicit locks or atomic counters.
 
 --
--- lock_f= lanes.genlock( linda_h, key [,N_uint=1] )
+-- [true [, ...]= trues(uint)
+--
+local function trues( n)
+	if n > 0 then
+		return true, trues( n - 1)
+	end
+end
+
+--
+-- lock_f = lanes.genlock( linda_h, key [,N_uint=1] )
 --
 -- = lock_f( +M )   -- acquire M
 --      ...locked...
@@ -597,16 +603,10 @@ end -- settings.with_timers
 --
 -- PUBLIC LANES API
 local genlock = function( linda, key, N)
-	linda:limit( key, N)
-	linda:set( key, nil)  -- clears existing data
-
-	--
-	-- [true [, ...]= trues(uint)
-	--
-	local function trues( n)
-		if n > 0 then
-			return true, trues( n - 1)
-		end
+	-- clear existing data and set the limit
+	N = N or 1
+	if linda:set( key) == cancel_error or linda:limit( key, N) == cancel_error then
+		return cancel_error
 	end
 
 	-- use an optimized version for case N == 1
@@ -618,7 +618,8 @@ local genlock = function( linda, key, N)
 			return linda:send( timeout, key, true)    -- suspends until been able to push them
 		else
 			local k = linda:receive( nil, key)
-			return k and true or false
+			-- propagate cancel_error if we got it, else return true or false
+			return k and ((k ~= cancel_error) and true or k) or false
 		end
 	end
 	or
@@ -629,34 +630,45 @@ local genlock = function( linda, key, N)
 			return linda:send( timeout, key, trues(M))    -- suspends until been able to push them
 		else
 			local k = linda:receive( nil, linda.batched, key, -M)
-			return k and true or false
+			-- propagate cancel_error if we got it, else return true or false
+			return k and ((k ~= cancel_error) and true or k) or false
 		end
 	end
 end
 
 
---
--- atomic_f= lanes.genatomic( linda_h, key [,initial_num=0.0] )
---
--- int= atomic_f( [diff_num=1.0] )
---
--- Returns an access function that allows atomic increment/decrement of the
--- number in 'key'.
---
--- PUBLIC LANES API
-local function genatomic( linda, key, initial_val )
-    linda:limit(key,2)          -- value [,true]
-    linda:set(key,initial_val or 0.0)   -- clears existing data (also queue)
+	--
+	-- atomic_f = lanes.genatomic( linda_h, key [,initial_num=0.0])
+	--
+	-- int|cancel_error = atomic_f( [diff_num = 1.0])
+	--
+	-- Returns an access function that allows atomic increment/decrement of the
+	-- number in 'key'.
+	--
+	-- PUBLIC LANES API
+	local genatomic = function( linda, key, initial_val)
+		-- clears existing data (also queue). the slot may contain the stored value, and an additional boolean value
+		if linda:limit( key, 2) == cancel_error or linda:set( key, initial_val or 0.0) == cancel_error then
+			return cancel_error
+		end
 
-    return
-    function(diff)
-        -- 'nil' allows 'key' to be numeric
-        linda:send( nil, key, true )    -- suspends until our 'true' is in
-        local val= linda:get(key) + (diff or 1.0)
-        linda:set( key, val )   -- releases the lock, by emptying queue
-        return val
-    end
-end
+		return function( diff)
+			-- 'nil' allows 'key' to be numeric
+			-- suspends until our 'true' is in
+			if linda:send( nil, key, true) == cancel_error then
+				return cancel_error
+			end
+			local val = linda:get( key)
+			if val ~= cancel_error then
+				val = val + (diff or 1.0)
+				-- set() releases the lock by emptying queue
+				if linda:set( key, val) == cancel_error then
+					val = cancel_error
+				end
+			end
+			return val
+		end
+	end
 
 	-- activate full interface
 	lanes.require = core.require
@@ -664,6 +676,7 @@ end
 	lanes.linda = core.linda
 	lanes.cancel_error = core.cancel_error
 	lanes.nameof = core.nameof
+	lanes.set_singlethreaded = core.set_singlethreaded
 	lanes.threads = core.threads or function() error "lane tracking is not available" end -- core.threads isn't registered if settings.track_lanes is false
 	lanes.set_thread_priority = core.set_thread_priority
 	lanes.timer = timer

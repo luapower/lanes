@@ -1,6 +1,6 @@
 /*
  * THREADING.C                        Copyright (c) 2007-08, Asko Kauppi
- *                                    Copyright (C) 2009-13, Benoit Germain
+ *                                    Copyright (C) 2009-14, Benoit Germain
  *
  * Lua Lanes OS threading specific code.
  *
@@ -12,7 +12,7 @@
 ===============================================================================
 
 Copyright (C) 2007-10 Asko Kauppi <akauppi@gmail.com>
-Copyright (C) 2009-13, Benoit Germain <bnt.germain@gmail.com>
+Copyright (C) 2009-14, Benoit Germain <bnt.germain@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -87,11 +87,13 @@ THE SOFTWARE.
 #if defined( PLATFORM_XBOX) || defined( PLATFORM_WIN32) || defined( PLATFORM_POCKETPC)
 static void FAIL( char const* funcname, int rc)
 {
-	fprintf( stderr, "%s() failed! (%d)\n", funcname, rc );
+	char buf[256];
+	FormatMessageA( FORMAT_MESSAGE_FROM_SYSTEM, NULL, rc, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), buf, 256, NULL);
+	fprintf( stderr, "%s() failed! [GetLastError() -> %d] '%s'", funcname, rc, buf);
 #ifdef _MSC_VER
-    __debugbreak(); // give a chance to the debugger!
+	__debugbreak(); // give a chance to the debugger!
 #endif // _MSC_VER
-    abort();
+	abort();
 }
 #endif // win32 build
 
@@ -246,7 +248,7 @@ static void prepare_timeout( struct timespec *ts, time_d abs_secs ) {
 
 #if THREADAPI == THREADAPI_WINDOWS
 
-#if WINVER <= 0x0400 // Windows NT4: Use Mutexes with Events
+#if _WIN32_WINNT < 0x0600 // CONDITION_VARIABLE aren't available
   //
   void MUTEX_INIT( MUTEX_T *ref ) {
      *ref= CreateMutex( NULL /*security attr*/, FALSE /*not locked*/, NULL );
@@ -268,7 +270,7 @@ static void prepare_timeout( struct timespec *ts, time_d abs_secs ) {
     if (!ReleaseMutex(*ref))
         FAIL( "ReleaseMutex", GetLastError() );
   }
-#endif // Windows NT4
+#endif // CONDITION_VARIABLE aren't available
 
 static int const gs_prio_remap[] =
 {
@@ -296,11 +298,15 @@ void THREAD_CREATE( THREAD_T* ref, THREAD_RETURN_T (__stdcall *func)( void*), vo
 		NULL  // thread id (not used)
 	);
 
-	if( h == INVALID_HANDLE_VALUE)
+	if( h == NULL) // _beginthreadex returns 0L on failure instead of -1L (like _beginthread)
+	{
 		FAIL( "CreateThread", GetLastError());
+	}
 
 	if (!SetThreadPriority( h, gs_prio_remap[prio + 3]))
+	{
 		FAIL( "SetThreadPriority", GetLastError());
+	}
 
 	*ref = h;
 }
@@ -378,7 +384,7 @@ bool_t THREAD_WAIT_IMPL( THREAD_T *ref, double secs)
 #endif // !__GNUC__
 	}
 
-#if WINVER <= 0x0400 // Windows NT4
+#if _WIN32_WINNT < 0x0600 // CONDITION_VARIABLE aren't available
 
 	void SIGNAL_INIT( SIGNAL_T* ref)
 	{
@@ -471,7 +477,7 @@ bool_t THREAD_WAIT_IMPL( THREAD_T *ref, double secs)
 			FAIL( "WaitForSingleObject", GetLastError());
 	}
 
-#else // Windows Vista and above: condition variables exist, use them
+#else // CONDITION_VARIABLE are available, use them
 
 	//
 	void SIGNAL_INIT( SIGNAL_T *ref )
@@ -528,7 +534,7 @@ bool_t THREAD_WAIT_IMPL( THREAD_T *ref, double secs)
 		WakeAllConditionVariable( ref);
 	}
 
-#endif // Windows Vista and above
+#endif // CONDITION_VARIABLE are available
 
 #else // THREADAPI == THREADAPI_PTHREAD
   // PThread (Linux, OS X, ...)
