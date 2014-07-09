@@ -3,7 +3,7 @@ project: lanes
 tagline: threads support
 ---
 
-**NOTE: This is just a distribution of Lanes. Lanes is developed [here][lanes site].**
+> **NOTE:** This is just a distribution of Lanes. Lanes is developed [here][lanes site].
 
 ## `local lanes = require'lanes'`
 
