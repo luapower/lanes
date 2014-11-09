@@ -1,2 +1,1 @@
-mkdir -p ../../bin/linux32/clib/lanes
-gcc -O2 -s -static-libgcc src/*.c -shared -o ../../bin/linux32/clib/lanes/core.so -I. -I../lua -pthread -DNDEBUG
+P=linux32 L="-s -static-libgcc -pthread" D=core.so A=liblanes_core.a ./build.sh

@@ -1,2 +1,2 @@
-mkdir -p ../../bin/osx32/clib/lanes
-gcc -arch i386 -O2 src/*.c -shared -o ../../bin/osx32/clib/lanes/core.so -I. -I../lua -undefined dynamic_lookup -DNDEBUG
+P=osx32 C="-arch i386" L="-arch i386 -undefined dynamic_lookup" \
+	D=core.so A=liblanes_core.a ./build.sh
