@@ -28,5 +28,14 @@
 !/bin/osx32/clib/lanes/**
 !/bin/osx64/clib/lanes/
 !/bin/osx64/clib/lanes/**
+
+!/bin/mingw32/lanes_*
+!/bin/mingw64/lanes_*
+!/bin/linux32/liblanes_*
+!/bin/linux64/liblanes_*
+!/bin/osx32/liblanes_*
+!/bin/osx64/liblanes_*
+
+
 !/csrc/lanes/
 !/csrc/lanes/**
