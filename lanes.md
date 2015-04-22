@@ -13,10 +13,11 @@ There's up-to-date Lanes documentation [here][lanes doc]. Ignore the [old site].
 
 ## LuaJIT notes
 
-  * to use ffi inside lanes you have to require the ffi module inside the lane, since the ffi module cannot
-    be transferred as an upvalue to your lane (you will get an error about "destination transfer database").
-    * this also means that *other modules* that depend on ffi cannot be upvalues and must be required
-	   explicitly inside the lane or luajit will crash.
+To use ffi inside lanes you have to require the ffi module inside the lane,
+since the ffi module cannot be transferred as an upvalue to your lane
+(you will get an error about "destination transfer database").
+This also means that *other modules* that depend on ffi cannot be upvalues
+and must be required explicitly inside the lane or luajit will crash.
 
 
 [lanes site]:     http://github.com/LuaLanes/lanes
