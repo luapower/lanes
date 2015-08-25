@@ -1,5 +1,4 @@
 ---
-project: lanes
 tagline: threads support
 ---
 
